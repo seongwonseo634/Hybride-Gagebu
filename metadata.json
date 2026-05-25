@@ -1,0 +1,10 @@
+{
+  "name": "하이브리드 가계부",
+  "description": "개인 및 모임 자산을 동시 관리하는 하이브리드 가계부 시스템입니다.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

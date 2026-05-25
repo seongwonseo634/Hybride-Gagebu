@@ -1,0 +1,129 @@
+{
+  "entities": {
+    "User": {
+      "type": "object",
+      "title": "User",
+      "description": "User profile document",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["email", "name", "createdAt", "updatedAt"]
+    },
+    "PersonalTransaction": {
+      "type": "object",
+      "title": "PersonalTransaction",
+      "description": "Personal ledger transaction",
+      "properties": {
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "category": { "type": "string" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "receiptUrl": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["amount", "type", "category", "date", "description", "createdAt", "updatedAt"]
+    },
+    "Group": {
+      "type": "object",
+      "title": "Group",
+      "description": "Group ledger metadata",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "ownerId", "createdAt", "updatedAt"]
+    },
+    "GroupMember": {
+      "type": "object",
+      "title": "GroupMember",
+      "description": "A user in a group",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "joinedAt": { "type": "string" }
+      },
+      "required": ["userId", "role", "joinedAt"]
+    },
+    "GroupTransaction": {
+      "type": "object",
+      "title": "GroupTransaction",
+      "description": "Group ledger transaction",
+      "properties": {
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "category": { "type": "string" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "receiptUrl": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["amount", "type", "category", "date", "description", "createdBy", "createdAt", "updatedAt"]
+    },
+    "GroupDue": {
+      "type": "object",
+      "title": "GroupDue",
+      "description": "Membership due tracking",
+      "properties": {
+        "amount": { "type": "number" },
+        "title": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["amount", "title", "dueDate", "createdAt", "createdBy"]
+    },
+    "GroupDuePayment": {
+      "type": "object",
+      "title": "GroupDuePayment",
+      "description": "Payment for a specific due by a member",
+      "properties": {
+        "userId": { "type": "string" },
+        "amountPaid": { "type": "number" },
+        "paidAt": { "type": "string" },
+        "isPaid": { "type": "boolean" }
+      },
+      "required": ["userId", "isPaid"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "A user profile"
+    },
+    "users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/PersonalTransaction" },
+      "description": "Personal transactions"
+    },
+    "groups/{groupId}": {
+      "schema": { "$ref": "#/entities/Group" },
+      "description": "Group metadata"
+    },
+    "groups/{groupId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/GroupMember" },
+      "description": "Group members where memberId is the userId"
+    },
+    "groups/{groupId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/GroupTransaction" },
+      "description": "Group transactions"
+    },
+    "groups/{groupId}/dues/{dueId}": {
+      "schema": { "$ref": "#/entities/GroupDue" },
+      "description": "Group dues (requests for payment)"
+    },
+    "groups/{groupId}/dues/{dueId}/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/GroupDuePayment" },
+      "description": "Payments for a due, paymentId is userId"
+    }
+  }
+}
