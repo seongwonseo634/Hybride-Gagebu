@@ -321,6 +321,33 @@ export default function ReportPage() {
         color: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4', '#d946ef'][index % 8]
     }));
   }, [filteredTransactions]);
+
+  const highExpenseShops = useMemo(() => {
+    const getNormalizedName = (name: string): string => {
+        const lowName = name.toLowerCase();
+        if (lowName.includes('costco') || lowName.includes('코스트코')) return '코스트코';
+        return name.trim();
+    };
+
+    const uniqueTransactions: PersonalTransaction[] = Array.from(new Map<string, PersonalTransaction>(filteredTransactions.map(t => [t.id, t])).values());
+    const merchantMap: Record<string, { amount: number, displayName: string }> = uniqueTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((acc, t) => {
+        const rawName = t.description.trim();
+        if (!rawName) return acc;
+        const name = getNormalizedName(rawName);
+        
+        if (!acc[name]) acc[name] = { amount: 0, displayName: rawName.length > name.length ? name : (rawName.includes('코스트코') ? '코스트코' : rawName) };
+        acc[name].displayName = (name === '코스트코') ? '코스트코' : name;
+        
+        acc[name].amount += Number(t.amount) || 0;
+        return acc;
+      }, {} as Record<string, { amount: number, displayName: string }>);
+    
+    return Object.entries(merchantMap)
+      .sort((a, b) => b[1].amount - a[1].amount)
+      .slice(0, 3);
+  }, [filteredTransactions]);
   
   const trendData = useMemo(() => {
     const data = [];
@@ -641,18 +668,57 @@ export default function ReportPage() {
 
         {/* --- 추가된 기능: 지출 카테고리 도넛 차트 --- */}
         <div className="col-span-1">
-          <div className="neo rounded-2xl p-6 border border-white/10 h-full">
-            <h3 className="font-bold flex items-center gap-2 mb-6"><PieChartIcon className="w-5 h-5 text-rose-500" /> 카테고리별 지출</h3>
-            <div className="h-60 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                    <Pie data={expenseCategoryData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                        {expenseCategoryData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                    </Pie>
-                    <RechartsTooltip formatter={(value: any) => `${value.toLocaleString()}원`}/>
-                    <Legend iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
+          <div className="neo rounded-2xl p-6 border border-white/10 h-full flex flex-col justify-between">
+            <h3 className="font-bold flex items-center gap-2 mb-4"><PieChartIcon className="w-5 h-5 text-rose-500" /> 카테고리별 지출</h3>
+            <div className="flex-1 flex flex-col justify-between">
+              <div className="h-44 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                      <Pie 
+                        data={expenseCategoryData} 
+                        innerRadius={50} 
+                        outerRadius={70} 
+                        paddingAngle={4} 
+                        dataKey="value"
+                      >
+                          {expenseCategoryData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'rgba(15, 23, 42, 0.95)', 
+                          border: '1px solid rgba(255, 255, 255, 0.1)', 
+                          borderRadius: '12px', 
+                          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+                          color: '#fff' 
+                        }}
+                        itemStyle={{ color: '#fff' }}
+                        formatter={(value: any) => `${value.toLocaleString()}원`}
+                      />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Custom responsive grid legend to fix wrapping and layout bugs */}
+              <div className="grid grid-cols-3 gap-x-2 gap-y-1.5 mt-4 text-[10px] font-bold max-h-[72px] overflow-y-auto px-1">
+                {expenseCategoryData.map((entry, index) => {
+                  const total = expenseCategoryData.reduce((acc, e) => acc + e.value, 0);
+                  const percent = total > 0 ? Math.round((entry.value / total) * 100) : 0;
+                  return (
+                    <div key={index} className="flex items-center gap-1 min-w-0" title={`${entry.name}: ${entry.value.toLocaleString()}원 (${percent}%)`}>
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                      <span className="truncate text-muted-foreground hover:text-foreground transition-colors">
+                        {entry.name}
+                      </span>
+                      <span className="text-[9px] opacity-75 shrink-0">({percent}%)</span>
+                    </div>
+                  );
+                })}
+                {expenseCategoryData.length === 0 && (
+                  <div className="col-span-3 text-center text-muted-foreground py-2 font-medium">데이터가 없습니다.</div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -821,33 +887,8 @@ export default function ReportPage() {
           <div className="neo rounded-2xl p-5">
              <h3 className="font-bold flex items-center gap-2 mb-4"><ShoppingCart className="w-5 h-5 text-green-500" /> 고지출 상점 분석</h3>
              <div className="space-y-3">
-                {filteredTransactions.length > 0 ? (
-                  (() => {
-                    const getNormalizedName = (name: string): string => {
-                        const lowName = name.toLowerCase();
-                        if (lowName.includes('costco') || lowName.includes('코스트코')) return '코스트코';
-                        return name.trim();
-                    };
-
-                    const uniqueTransactions: PersonalTransaction[] = Array.from(new Map<string, PersonalTransaction>(filteredTransactions.map(t => [t.id, t])).values());
-                    const merchantMap: Record<string, { amount: number, displayName: string }> = uniqueTransactions
-                      .filter(t => t.type === 'expense')
-                      .reduce((acc, t) => {
-                        const rawName = t.description.trim();
-                        if (!rawName) return acc;
-                        const name = getNormalizedName(rawName);
-                        
-                        if (!acc[name]) acc[name] = { amount: 0, displayName: rawName.length > name.length ? name : (rawName.includes('코스트코') ? '코스트코' : rawName) };
-                        acc[name].displayName = (name === '코스트코') ? '코스트코' : name;
-                        
-                        acc[name].amount += Number(t.amount) || 0;
-                        return acc;
-                      }, {} as Record<string, { amount: number, displayName: string }>);
-                    
-                    return Object.entries(merchantMap)
-                      .sort((a, b) => b[1].amount - a[1].amount)
-                      .slice(0, 3);
-                  })().map(([merchant, data], i) => {
+                {highExpenseShops.length > 0 ? (
+                  highExpenseShops.map(([merchant, data], i) => {
                     return (
                       <div key={i} className="flex justify-between items-center p-2 rounded-xl bg-secondary/50">
                         <div className="flex items-center gap-3">
@@ -1114,6 +1155,8 @@ export default function ReportPage() {
           <Download className="w-4 h-4 mr-2" /> PDF 월간 종합 리포트 저장
         </Button>
       </div>
+
+
 
     </div>
   );
