@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, where, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, serverTimestamp, orderBy, writeBatch } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Users, Plus, ArrowRight, ShieldAlert, CheckCircle2, Circle, Copy, Trash2, Bell, FileText, PieChart as PieChartIcon, TrendingUp, Share2, UserMinus, Wallet } from 'lucide-react';
 import { CategoryIcon } from '../components/CategoryIcon';
 import MemberManagementPage from './MemberManagementPage';
-import { Group, GroupDue, GroupTransaction } from '../types';
+import { Group, GroupDue, GroupTransaction, GroupNotice } from '../types';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -26,6 +26,8 @@ function GroupsList() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupType, setNewGroupType] = useState<'single' | 'regular'>('single');
+  const [newGroupCarryOver, setNewGroupCarryOver] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [open, setOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
@@ -75,36 +77,47 @@ function GroupsList() {
         email: user.email || '' 
       };
 
+      const batch = writeBatch(db);
       const groupRef = doc(collection(db, 'groups'));
       const groupData: Omit<Group, 'id'> = {
         name: newGroupName,
         ownerId: user.uid,
         memberIds: [user.uid],
         memberProfiles,
+        groupType: newGroupType,
+        previousCarryOver: newGroupType === 'regular' ? (parseInt(newGroupCarryOver) || 0) : 0,
         createdAt: serverTimestamp() as any,
         updatedAt: serverTimestamp() as any,
       };
       
-      await setDoc(groupRef, groupData);
+      batch.set(groupRef, groupData);
       
-      // Initialize members subcollection
-      await setDoc(doc(db, `groups/${groupRef.id}/members`, user.uid), {
+      // Initialize members subcollection in the same batch
+      const memberRef = doc(db, `groups/${groupRef.id}/members`, user.uid);
+      batch.set(memberRef, {
         role: 'admin',
         joinedAt: serverTimestamp()
       });
 
+      await batch.commit();
+
       toast.success('새 모임이 생성되었습니다.');
       setOpen(false);
       setNewGroupName('');
+      setNewGroupType('single');
+      setNewGroupCarryOver('');
       
       // Auto navigate
       navigate(`/groups/${groupRef.id}`);
     } catch (e) {
+      console.error("Group creation error:", e);
       const handled = handleFirestoreError(e, OperationType.CREATE, 'groups');
       if (handled) {
         toast.info("인터넷 연결이 불안정하여 완료 후 자동으로 반영됩니다.");
         setOpen(false);
         setNewGroupName('');
+        setNewGroupType('single');
+        setNewGroupCarryOver('');
       } else {
         toast.error("모임 생성 중 오류가 발생했습니다.");
       }
@@ -173,7 +186,36 @@ function GroupsList() {
                 <Label htmlFor="name">모임 이름</Label>
                 <Input id="name" placeholder="예: 2024 동기여행 계좌" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} />
               </div>
-              <Button className="w-full" disabled={isCreating} onClick={handleCreateGroup}>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-foreground">모임 유형</Label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewGroupType('single')}
+                    className={`flex-1 py-2 text-xs rounded-xl border font-bold transition-all ${newGroupType === 'single' ? 'bg-emerald-600/15 text-emerald-600 border-emerald-500/30 dark:bg-emerald-500/25 dark:text-emerald-400' : 'bg-muted/40 text-muted-foreground border-transparent opacity-60'}`}
+                  >
+                    1회성 모임 (정산)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewGroupType('regular')}
+                    className={`flex-1 py-2 text-xs rounded-xl border font-bold transition-all ${newGroupType === 'regular' ? 'bg-emerald-600/15 text-emerald-600 border-emerald-500/30 dark:bg-emerald-500/25 dark:text-emerald-400' : 'bg-muted/40 text-muted-foreground border-transparent opacity-60'}`}
+                  >
+                    정기 모임 (이월)
+                  </button>
+                </div>
+              </div>
+
+              {newGroupType === 'regular' && (
+                <div className="space-y-2 animate-in fade-in duration-200">
+                  <Label htmlFor="carryOver" className="text-xs font-semibold text-foreground">초기 이월금 (₩)</Label>
+                  <Input id="carryOver" type="number" placeholder="예: 100000" value={newGroupCarryOver} onChange={e => setNewGroupCarryOver(e.target.value)} className="font-mono text-sm" />
+                  <p className="text-[10px] text-muted-foreground">이전 회차 모임 등에서 남아서 새 모임에 가입시 이월할 잔액금액입니다.</p>
+                </div>
+              )}
+
+              <Button className="w-full mt-2" disabled={isCreating} onClick={handleCreateGroup}>
                 {isCreating ? '생성 중...' : '모임 생성'}
               </Button>
               <div className="text-center text-xs text-muted-foreground my-2">또는</div>
@@ -260,6 +302,9 @@ function GroupDetail() {
   const [dueAmount, setDueAmount] = useState('');
   const [deleteDueConfirmId, setDeleteDueConfirmId] = useState<string | null>(null);
   const [kickTarget, setKickTarget] = useState<string | null>(null);
+  const [notices, setNotices] = useState<GroupNotice[]>([]);
+  const [regularCarryOverText, setRegularCarryOverText] = useState('');
+  const [isPostingNotice, setIsPostingNotice] = useState(false);
   
   const handleKick = async (uid: string) => {
     try {
@@ -317,7 +362,10 @@ function GroupDetail() {
       });
       
       setTransactions(txs);
-    }, (error) => console.error("Transactions fetch error:", error));
+    }, (error) => {
+      console.error("Transactions fetch error:", error);
+      handleFirestoreError(error, OperationType.GET, `groups/${groupId}/transactions`);
+    });
 
     // Fetch dues
     const qDues = query(collection(db, `groups/${groupId}/dues`), orderBy('createdAt', 'desc'));
@@ -325,12 +373,32 @@ function GroupDetail() {
       const ds: GroupDue[] = [];
       snap.forEach(d => ds.push({ id: d.id, ...d.data() } as GroupDue));
       setDues(ds);
-    }, (error) => console.error("Dues fetch error:", error));
+    }, (error) => {
+      console.error("Dues fetch error:", error);
+      handleFirestoreError(error, OperationType.GET, `groups/${groupId}/dues`);
+    });
+
+    // Fetch notices and sort locally to protect against missing Firestore index on subcollection
+    const qNotices = collection(db, `groups/${groupId}/notices`);
+    const unsubsNotices = onSnapshot(qNotices, (snap) => {
+      const ns: GroupNotice[] = [];
+      snap.forEach(d => ns.push({ id: d.id, ...d.data() } as GroupNotice));
+      ns.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return timeB - timeA;
+      });
+      setNotices(ns);
+    }, (error) => {
+      console.error("Notices subscribe error:", error);
+      handleFirestoreError(error, OperationType.GET, `groups/${groupId}/notices`);
+    });
 
     return () => {
       unsubsGroup();
       unsubsTx();
       unsubsDues();
+      unsubsNotices();
     };
   }, [groupId]);
 
@@ -344,7 +412,28 @@ function GroupDetail() {
   
   const [dutchPayText, setDutchPayText] = useState('');
   const isAdmin = userRole === 'admin' || (user?.uid && group?.ownerId && user.uid === group.ownerId);
-  const balance = transactions.reduce((acc, t) => t.type === 'income' ? acc + (t.amount || 0) : acc - (t.amount || 0), 0);
+
+  const totalExpectedDues = group ? dues.reduce((acc, due) => acc + (due.amount || 0) * getMemberCount(group), 0) : 0;
+  const totalPaidDues = dues.reduce((acc, due) => acc + (due.amount || 0) * (due.paidMemberIds?.length || 0), 0);
+  const remainingDues = totalExpectedDues - totalPaidDues;
+
+  const unpaidMembersSet = new Set<string>();
+  if (group) {
+    const allMemberIds = [...(group.memberIds || []), ...(group.manualMembers?.map(m => m.id) || [])];
+    dues.forEach(due => {
+      const paidSet = new Set(due.paidMemberIds || []);
+      allMemberIds.forEach(id => {
+        if (!paidSet.has(id)) {
+          unpaidMembersSet.add(id);
+        }
+      });
+    });
+  }
+  const unpaidCount = unpaidMembersSet.size;
+
+  const balance = group?.groupType === 'regular'
+    ? ((group.previousCarryOver || 0) + totalPaidDues + transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0) - transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0))
+    : transactions.reduce((acc, t) => t.type === 'income' ? acc + (t.amount || 0) : acc - (t.amount || 0), 0);
 
   const calculateDutchPay = (txs: GroupTransaction[]) => {
     const groupName = group?.name || '모임';
@@ -359,6 +448,35 @@ function GroupDetail() {
 멤버 : 참여한 회원수 : ${count}명
 1인당 입금액 : ${(perPerson || 0).toLocaleString()}원
 송금 계좌 : `;
+  };
+
+  const calculateRegularCarryOver = (txs: GroupTransaction[], previousCarryOver: number, paidDues: number) => {
+    const groupName = group?.name || '모임';
+    const totalExp = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0);
+    const totalIncome = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0);
+    const totalBalance = previousCarryOver + paidDues + totalIncome - totalExp;
+
+    const itemizedExpenses = txs
+      .filter(t => t.type === 'expense')
+      .map(t => `- ${t.description} (${t.category}): ₩${(t.amount || 0).toLocaleString()}`)
+      .join('\n');
+
+    return `[${groupName} 정기 모임 회비 및 지출 이월 공지]
+
+📅 정산 일자: ${new Date().toLocaleDateString('ko-KR')}
+
+💵 재정 정산 내역:
+• 이전 모임 이월금 : ₩${previousCarryOver.toLocaleString()}
+• 이번 회비 수납액 : ₩${paidDues.toLocaleString()}
+• 기타 수입 금액: ₩${totalIncome.toLocaleString()}
+• 이번 모임 지출액: ₩${totalExp.toLocaleString()}
+
+💰 최종 차기 이월금 : ₩${totalBalance.toLocaleString()}
+
+📝 상세 지출 내역:
+${itemizedExpenses || '지출 내역 없음'}
+
+감사합니다! 대단히 즐거운 모임이었습니다. 😊`;
   };
 
   useEffect(() => {
@@ -389,7 +507,11 @@ function GroupDetail() {
 
   useEffect(() => {
     setDutchPayText(calculateDutchPay(transactions));
-  }, [transactions, group, participatingCount]);
+    if (group) {
+      const carryOver = group.previousCarryOver || 0;
+      setRegularCarryOverText(calculateRegularCarryOver(transactions, carryOver, totalPaidDues));
+    }
+  }, [transactions, group, participatingCount, totalPaidDues]);
 
   if (!group) return <div className="p-8 text-center text-muted-foreground animate-pulse">모임 정보 불러오는 중...</div>;
 
@@ -416,10 +538,6 @@ function GroupDetail() {
     });
   };
 
-  const totalExpectedDues = dues.reduce((acc, due) => acc + (due.amount || 0) * getMemberCount(group), 0);
-  const totalPaidDues = dues.reduce((acc, due) => acc + (due.amount || 0) * (due.paidMemberIds?.length || 0), 0);
-  const remainingDues = totalExpectedDues - totalPaidDues;
-  
   const expensesByCategory = transactions
     .filter(t => t.type === 'expense')
     .reduce((acc, t) => {
@@ -486,10 +604,59 @@ function GroupDetail() {
         <TabsContent value="dashboard" className="space-y-4">
           <Card className="bg-primary text-primary-foreground border-none">
             <CardContent className="p-6">
-              <p className="text-sm font-medium opacity-90"></p>
+              <p className="text-sm font-medium opacity-90">모임 총 잔액</p>
               <p className="text-4xl font-bold mt-2">₩{(balance || 0).toLocaleString()}</p>
             </CardContent>
           </Card>
+
+          {notices.length > 0 && (
+            <div className="space-y-3 mt-4 mb-2 animate-in fade-in duration-300">
+              <div className="flex items-center justify-between">
+                <h4 className="font-bold text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 px-1">
+                  <Bell className="w-3.5 h-3.5 animate-bounce" />
+                  모임 소식 및 이월 결산 공지
+                </h4>
+                {notices.length > 1 && (
+                  <span className="text-[10px] text-muted-foreground">총 {notices.length}개</span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {notices.slice(0, 2).map((notice) => (
+                  <Card key={notice.id} className="neo bg-emerald-500/5 border border-emerald-500/10 rounded-2xl relative overflow-hidden">
+                    <CardContent className="p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="font-bold text-sm text-foreground">{notice.title || '정결 공지사항'}</p>
+                        <span className="text-[10px] text-muted-foreground">
+                          {notice.createdAt?.toDate ? format(notice.createdAt.toDate(), 'yy.MM.dd') : '방금 전'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto pr-2">
+                        {notice.content}
+                      </p>
+                      <div className="flex items-center justify-between pt-2 text-[10px] text-muted-foreground border-t border-dashed border-emerald-500/10">
+                        <span>작성자: {notice.createdByName}</span>
+                        {isAdmin && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                  await deleteDoc(doc(db, `groups/${groupId}/notices`, notice.id));
+                                  toast.success('공지사항이 삭제되었습니다.');
+                              } catch (e) {
+                                  toast.error('공지 삭제 실패');
+                              }
+                            }}
+                            className="text-red-500 hover:underline flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3 h-3" /> 삭제
+                          </button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between px-1 mt-6">
             <h3 className="font-semibold text-lg">거래 내역</h3>
@@ -691,51 +858,146 @@ function GroupDetail() {
 
         {/* TAB 3: 정산 (Dutch Pay) */}
         <TabsContent value="dutch" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>자동 더치페이 계산결과</CardTitle>
-              <CardDescription>멤버 수에 맞게 총 지출을 1/N 배분합니다.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <textarea 
-                className="w-full neo-inset p-4 rounded-xl text-sm font-mono leading-relaxed mb-4 bg-transparent border-none min-h-[150px]"
-                value={dutchPayText}
-                onChange={(e) => setDutchPayText(e.target.value)}
-              />
-              <div className="flex items-center space-x-2 my-2">
-                <Label htmlFor="participatingCount" className="text-sm">참여한 회원수</Label>
-                <Input 
-                  id="participatingCount" 
-                  type="number" 
-                  value={participatingCount} 
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value) || 0;
-                    setParticipatingCount(val);
-                  }}
-                  className="w-20"
+          {group.groupType === 'regular' ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>정기 모임 회비 및 지출 이월 공지</CardTitle>
+                <CardDescription>이번 모임의 결산 내역과 차기 이월금을 계산하고 공지합니다.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-muted/25 p-4 rounded-2xl border border-muted-foreground/10">
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground font-semibold">이전 이월금</p>
+                    <p className="font-mono text-sm font-bold">₩{(group.previousCarryOver || 0).toLocaleString()}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground font-semibold">회비 수납 총액</p>
+                    <p className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">₩{totalPaidDues.toLocaleString()}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground font-semibold">기타 수입</p>
+                    <p className="font-mono text-sm font-bold text-teal-600 dark:text-teal-400">₩{transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0).toLocaleString()}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground font-semibold">이번 지출액</p>
+                    <p className="font-mono text-sm font-bold text-rose-500">₩{transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0).toLocaleString()}</p>
+                  </div>
+                </div>
+
+                <div className="neo p-4 rounded-2xl bg-emerald-500/5 text-center space-y-1">
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">최종 차기 이월 금액</p>
+                  <p className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                    ₩{((group.previousCarryOver || 0) + totalPaidDues + transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + (t.amount || 0), 0) - transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0)).toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="regularNotice" className="text-xs font-semibold">통보 메시지 내용 편집</Label>
+                  <textarea 
+                    id="regularNotice"
+                    className="w-full neo-inset p-4 rounded-xl text-sm font-mono leading-relaxed bg-transparent border-none min-h-[180px]"
+                    value={regularCarryOverText}
+                    onChange={(e) => setRegularCarryOverText(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button 
+                    onClick={() => {
+                      try {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                          navigator.clipboard.writeText(regularCarryOverText);
+                          toast.success("결산 이월 공지가 클립보드에 복사되었습니다. 카카오톡 등에 붙여넣어 회원님들과 실시간 공유하세요!");
+                        } else {
+                          alert("현재 환경에서는 클립보드 복사를 지원하지 않습니다.");
+                        }
+                      } catch (e) {
+                        console.error(e);
+                      }
+                    }}
+                    variant="outline"
+                    className="flex items-center justify-center gap-1.5"
+                  >
+                    <Copy className="w-4 h-4" />
+                    결산내용 복사하기
+                  </Button>
+                  
+                  <Button 
+                    disabled={isPostingNotice}
+                    onClick={async () => {
+                      setIsPostingNotice(true);
+                      try {
+                        const noticeRef = doc(collection(db, `groups/${groupId}/notices`));
+                        await setDoc(noticeRef, {
+                          title: `[공지] 이번 모임 결산 및 이월 내역 통보`,
+                          content: regularCarryOverText,
+                          createdBy: user?.uid || '',
+                          createdByName: user?.displayName || user?.email?.split('@')[0] || '총무',
+                          createdAt: serverTimestamp()
+                        });
+                        toast.success("✨ 이월 결산 내용이 모임 소식글에 공지로 등록되었습니다!");
+                      } catch (e) {
+                        console.error(e);
+                        toast.error("공지사항 등록 실패");
+                      } finally {
+                        setIsPostingNotice(false);
+                      }
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5"
+                  >
+                    <Bell className="w-4 h-4" />
+                    소식 글로 게시하기
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>자동 더치페이 계산결과</CardTitle>
+                <CardDescription>멤버 수에 맞게 총 지출을 1/N 배분합니다.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <textarea 
+                  className="w-full neo-inset p-4 rounded-xl text-sm font-mono leading-relaxed mb-4 bg-transparent border-none min-h-[150px]"
+                  value={dutchPayText}
+                  onChange={(e) => setDutchPayText(e.target.value)}
                 />
-              </div>
-              <Button 
-                onClick={() => {
-                  try {
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                      navigator.clipboard.writeText(dutchPayText);
-                      toast.success("클립보드에 복사되었습니다. 카카오톡에 붙여넣으세요!");
-                    } else {
-                      alert("현재 환경에서는 클립보드 복사를 지원하지 않습니다. 텍스트를 직접 복사해주세요.");
+                <div className="flex items-center space-x-2 my-2">
+                  <Label htmlFor="participatingCount" className="text-sm">참여한 회원수</Label>
+                  <Input 
+                    id="participatingCount" 
+                    type="number" 
+                    value={participatingCount} 
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 0;
+                      setParticipatingCount(val);
+                    }}
+                    className="w-20"
+                  />
+                </div>
+                <Button 
+                  onClick={() => {
+                    try {
+                      if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(dutchPayText);
+                        toast.success("클립보드에 복사되었습니다. 카카오톡에 붙여넣으세요!");
+                      } else {
+                        alert("현재 환경에서는 클립보드 복사를 지원하지 않습니다. 텍스트를 직접 복사해주세요.");
+                      }
+                    } catch (e) {
+                      console.error("Clipboard copy failed", e);
+                      alert("클립보드 복사 중 오류가 발생했습니다.");
                     }
-                  } catch (e) {
-                    console.error("Clipboard copy failed", e);
-                    alert("클립보드 복사 중 오류가 발생했습니다.");
-                  }
-                }}
-                className="w-full"
-              >
-                <Copy className="w-4 h-4 mr-2" />
-                정산 메시지 복사하기
-              </Button>
-            </CardContent>
-          </Card>
+                  }}
+                  className="w-full"
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  정산 메시지 복사하기
+                </Button>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* TAB 4: 분석 (Analytics) */}
@@ -770,10 +1032,10 @@ function GroupDetail() {
             
             <Card>
               <CardContent className="p-4 flex flex-col justify-center items-center text-center h-full">
-                <p className="text-sm text-muted-foreground mb-1">예상 잔액(완납시)</p>
-                <div className="flex items-center gap-1.5 justify-center mb-1 text-emerald-600">
-                  <TrendingUp className="w-5 h-5" />
-                  <p className="text-xl font-bold">₩{(totalExpectedDues - transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + (t.amount || 0), 0)).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground mb-1">회비 미납액(불참자 {unpaidCount}명)</p>
+                <div className="flex items-center gap-1.5 justify-center mb-1 text-amber-500">
+                  <ShieldAlert className="w-5 h-5" />
+                  <p className="text-xl font-bold">₩{remainingDues.toLocaleString()}</p>
                 </div>
               </CardContent>
             </Card>
@@ -844,6 +1106,85 @@ function GroupDetail() {
                     </Button>
                 </CardContent>
             </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>모임 기본 옵션 설정</CardTitle>
+                    <CardDescription>모임의 성격 및 결산 회비 이월 구조를 설정합니다.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label className="text-xs font-semibold text-foreground">모임 유형</Label>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                disabled={!isAdmin}
+                                onClick={async () => {
+                                    try {
+                                        await updateDoc(doc(db, 'groups', groupId!), { groupType: 'single' });
+                                        toast.success('모임 유형이 1회성 정산 모임으로 변경되었습니다.');
+                                    } catch (e) {
+                                        toast.error('모임 유형 변경 실패');
+                                    }
+                                }}
+                                className={`flex-1 py-3 text-xs rounded-xl border font-bold transition-all ${
+                                    (group.groupType || 'single') === 'single' 
+                                        ? 'bg-emerald-600/10 text-emerald-600 border-emerald-500/30 dark:bg-emerald-500/25 dark:text-emerald-400' 
+                                        : 'bg-muted/40 text-muted-foreground border-transparent opacity-60'
+                                }`}
+                            >
+                                1회성 모임 (지출 정산, 1/N)
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!isAdmin}
+                                onClick={async () => {
+                                    try {
+                                        await updateDoc(doc(db, 'groups', groupId!), { groupType: 'regular' });
+                                        toast.success('모임 유형이 정기 모임으로 변경되었습니다.');
+                                    } catch (e) {
+                                        toast.error('모임 유형 변경 실패');
+                                    }
+                                }}
+                                className={`flex-1 py-3 text-xs rounded-xl border font-bold transition-all ${
+                                    group.groupType === 'regular' 
+                                        ? 'bg-emerald-600/10 text-emerald-600 border-emerald-500/30 dark:bg-emerald-500/25 dark:text-emerald-400' 
+                                        : 'bg-muted/40 text-muted-foreground border-transparent opacity-60'
+                                }`}
+                            >
+                                정기 모임 (회비 이월)
+                            </button>
+                        </div>
+                    </div>
+
+                    {group.groupType === 'regular' && (
+                        <div className="space-y-2 animate-in fade-in duration-200">
+                            <Label htmlFor="previousCarryOver" className="text-xs font-semibold text-foreground">이전 모임 이월금 (₩)</Label>
+                            <Input
+                                key={group.id + '-' + (group.previousCarryOver || 0)}
+                                id="previousCarryOver"
+                                type="number"
+                                placeholder="예: 50000"
+                                defaultValue={group.previousCarryOver || 0}
+                                onBlur={async (e) => {
+                                    if (!isAdmin) return;
+                                    const val = parseInt(e.target.value) || 0;
+                                    try {
+                                        await updateDoc(doc(db, 'groups', groupId!), { previousCarryOver: val });
+                                        toast.success('이전 모임 이월금이 업데이트되었습니다.');
+                                    } catch (e) {
+                                        toast.error('이월금 저장 중 오류가 발생했습니다.');
+                                    }
+                                }}
+                                disabled={!isAdmin}
+                                className="w-full font-mono text-sm"
+                            />
+                            <p className="text-[10px] text-muted-foreground">이전 정기모임에서 남아서 다음 회차 모임으로 이월된 금액입니다. 수정 후 포커스를 해제(Blur)하면 즉시 자동저장됩니다.</p>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
             <Card>
                 <CardHeader>
                     <CardTitle>모임 설정</CardTitle>
