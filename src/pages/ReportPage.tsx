@@ -81,22 +81,30 @@ export default function ReportPage() {
     // Budgets
     const unsubBudgets = onSnapshot(collection(db, `${path}/budgets`), (snap) => {
       setBudgets(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.SYNC, `${path}/budgets`);
     });
 
     // Assets
     const unsubAssets = onSnapshot(collection(db, `${path}/assets`), (snap) => {
       setAssets(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.SYNC, `${path}/assets`);
     });
 
     // Challenges
     const qChallenges = query(collection(db, `${path}/challenges`), orderBy('createdAt', 'desc'));
     const unsubChallenges = onSnapshot(qChallenges, (snap) => {
       setChallenges(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.SYNC, `${path}/challenges`);
     });
 
     // Recurring Payments
     const unsubRecurring = onSnapshot(collection(db, `${path}/recurring`), (snap) => {
       setRecurringPayments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.SYNC, `${path}/recurring`);
     });
 
     return () => {
@@ -363,6 +371,16 @@ export default function ReportPage() {
         const dataUrl = await domtoimage.toPng(element, {
             quality: 1,
             bgcolor: document.documentElement.classList.contains('dark') ? '#020617' : '#ffffff',
+            filter: (node) => {
+                if (node instanceof HTMLElement) {
+                    if (node.hasAttribute('data-html2canvas-ignore') || 
+                        node.classList.contains('pdf-ignore') ||
+                        node.id === 'back-btn') {
+                        return false;
+                    }
+                }
+                return true;
+            },
             style: {
                 transform: 'scale(1)',
                 transformOrigin: 'top left'
@@ -370,10 +388,27 @@ export default function ReportPage() {
         });
         
         const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
+        const pdfWidth = pdf.internal.pageSize.getWidth(); // typically 210
+        const pdfHeightLimit = pdf.internal.pageSize.getHeight(); // typically 297
         
-        pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        const imgWidth = pdfWidth;
+        const imgHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
+        
+        let heightLeft = imgHeight;
+        let position = 0;
+        
+        // Add the first page
+        pdf.addImage(dataUrl, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pdfHeightLimit;
+        
+        // Continue adding pages for overflowing content
+        while (heightLeft > 0) {
+            position = heightLeft - imgHeight;
+            pdf.addPage();
+            pdf.addImage(dataUrl, 'PNG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pdfHeightLimit;
+        }
+        
         pdf.save('가계부_종합리포트.pdf');
         
         toast.success('✨ 프리미엄 보고서가 성공적으로 다운로드 되었습니다!');
@@ -513,7 +548,7 @@ export default function ReportPage() {
 
   return (
     <div ref={componentRef} id="report-content" className="p-4 md:p-8 space-y-6 max-w-7xl mx-auto mb-20 md:mb-0 animate-in fade-in">
-       <Button onClick={() => navigate('/')} variant="ghost" className="text-sm font-bold text-emerald-600 mb-2">
+       <Button onClick={() => navigate('/')} variant="ghost" className="text-sm font-bold text-emerald-600 mb-2" data-html2canvas-ignore>
            &lt;- 이전으로
        </Button>
       {transactions.length === 0 && !loading && (
@@ -542,7 +577,7 @@ export default function ReportPage() {
           <p className="text-sm text-muted-foreground mt-1">나의 재무 상태를 입체적으로 분석합니다</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="neo-inset p-1 rounded-xl flex items-center bg-white/50 dark:bg-black/20">
+          <div className="neo-inset p-1 rounded-xl flex items-center bg-white/50 dark:bg-black/20" data-html2canvas-ignore>
             {[
               { id: '1w', label: '주간' },
               { id: '1m', label: '월간' },
