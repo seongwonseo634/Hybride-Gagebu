@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, subMonths, startOfYear, endOfYear, subWeeks } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, AreaChart, Area, ComposedChart, Legend } from 'recharts';
-import { Target, Download, Sparkles, AlertCircle, Users, CheckCircle2, Calendar, Lightbulb, PieChart as PieChartIcon, ArrowRight, Bell, Trophy, ShieldAlert, CreditCard, ShoppingCart, Landmark, TrendingUp, BellRing, Trash2, CircleHelp } from 'lucide-react';
+import { Target, Sparkles, AlertCircle, Users, CheckCircle2, Calendar, Lightbulb, PieChart as PieChartIcon, ArrowRight, Bell, Trophy, ShieldAlert, CreditCard, ShoppingCart, Landmark, TrendingUp, BellRing, Trash2, CircleHelp } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
@@ -10,8 +10,6 @@ import { Label } from '../components/ui/label';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import domtoimage from 'dom-to-image-more';
-import { jsPDF } from 'jspdf';
 import { collection, query, where, getDocs, orderBy, onSnapshot, doc, setDoc, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { PersonalTransaction } from '../types';
@@ -385,66 +383,6 @@ export default function ReportPage() {
   const [assetOpen, setAssetOpen] = useState(false);
   const componentRef = React.useRef<HTMLDivElement>(null);
   
-  const handlePdfExport = async () => {
-    const element = componentRef.current;
-    if (!element) {
-        toast.error('리포트 내용을 불러올 수 없습니다.');
-        return;
-    }
-    
-    toast.info('PDF를 생성하는 중입니다... (10~20초 소요될 수 있습니다)');
-    
-    try {
-        const dataUrl = await domtoimage.toPng(element, {
-            quality: 1,
-            bgcolor: document.documentElement.classList.contains('dark') ? '#020617' : '#ffffff',
-            filter: (node) => {
-                if (node instanceof HTMLElement) {
-                    if (node.hasAttribute('data-html2canvas-ignore') || 
-                        node.classList.contains('pdf-ignore') ||
-                        node.id === 'back-btn') {
-                        return false;
-                    }
-                }
-                return true;
-            },
-            style: {
-                transform: 'scale(1)',
-                transformOrigin: 'top left'
-            }
-        });
-        
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfWidth = pdf.internal.pageSize.getWidth(); // typically 210
-        const pdfHeightLimit = pdf.internal.pageSize.getHeight(); // typically 297
-        
-        const imgWidth = pdfWidth;
-        const imgHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
-        
-        let heightLeft = imgHeight;
-        let position = 0;
-        
-        // Add the first page
-        pdf.addImage(dataUrl, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pdfHeightLimit;
-        
-        // Continue adding pages for overflowing content
-        while (heightLeft > 0) {
-            position = heightLeft - imgHeight;
-            pdf.addPage();
-            pdf.addImage(dataUrl, 'PNG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pdfHeightLimit;
-        }
-        
-        pdf.save('가계부_종합리포트.pdf');
-        
-        toast.success('✨ 프리미엄 보고서가 성공적으로 다운로드 되었습니다!');
-    } catch (error: any) {
-        console.error("PDF generation error: ", error);
-        toast.error("브라우저 제한으로 PDF 생성에 실패했습니다. 새 탭에서 열어 시도해주세요.");
-    }
-  };
-  
   const EXPENSE_CATEGORIES = ['식비', '교통/차량', '쇼핑/뷰티', '문화/여가', '건강/운동', '공과금/요금', '주거/통신', '교육', '경조사'];
   
   const totalAssets = useMemo(() => assets.reduce((acc, a) => acc + (Number(a.value) || 0), 0), [assets]);
@@ -622,9 +560,6 @@ export default function ReportPage() {
               </button>
             ))}
           </div>
-          <Button variant="outline" size="sm" className="bg-white/50 dark:bg-black/20" onClick={handlePdfExport} data-html2canvas-ignore>
-            <Download className="w-4 h-4 mr-2" /> PDF 내보내기
-          </Button>
         </div>
       </div>
 
@@ -1150,11 +1085,7 @@ export default function ReportPage() {
 
       </div>
 
-      <div className="flex justify-center mt-6 block md:hidden" data-html2canvas-ignore>
-         <Button variant="outline" className="w-full h-12 neo-button bg-brand-mint text-white border-none font-bold shadow-md" onClick={handlePdfExport}>
-          <Download className="w-4 h-4 mr-2" /> PDF 월간 종합 리포트 저장
-        </Button>
-      </div>
+
 
 
 
